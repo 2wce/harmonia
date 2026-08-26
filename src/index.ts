@@ -1,4 +1,2 @@
-/**
- * Harmonia's public protocol and coordination APIs will be added in later tasks.
- */
-export {};
+export * from "./protocol.js";
+export * from "./wire.js";
