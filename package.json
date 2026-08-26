@@ -1,0 +1,44 @@
+{
+  "name": "@2wce/harmonia",
+  "version": "0.1.0",
+  "private": false,
+  "files": [
+    "dist",
+    "README.md",
+    "CHANGELOG.md"
+  ],
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./testing": {
+      "types": "./dist/testing/index.d.ts",
+      "import": "./dist/testing/index.js"
+    }
+  },
+  "publishConfig": {
+    "access": "restricted"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run --passWithNoTests",
+    "lint": "oxlint --no-error-on-unmatched-pattern .",
+    "format": "oxfmt .",
+    "format:check": "oxfmt --check .",
+    "pack:check": "pnpm build && pnpm pack --pack-destination .artifacts"
+  },
+  "devDependencies": {
+    "@changesets/cli": "^2.29.7",
+    "oxfmt": "^0.64.0",
+    "oxlint": "^1.79.0",
+    "typescript": "^7.0.2",
+    "vitest": "^3.2.4"
+  },
+  "engines": {
+    "node": ">=24"
+  },
+  "packageManager": "pnpm@10.33.1"
+}
