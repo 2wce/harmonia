@@ -28,7 +28,7 @@
     "lint": "oxlint --no-error-on-unmatched-pattern .",
     "format": "oxfmt .",
     "format:check": "oxfmt --check .",
-    "pack:check": "pnpm build && pnpm pack --pack-destination .artifacts"
+    "pack:check": "pnpm build && pnpm pack --pack-destination .artifacts && node scripts/verify-pack-exports.mjs"
   },
   "devDependencies": {
     "@changesets/cli": "^2.29.7",
