@@ -69,6 +69,8 @@ function change(changeId: string): SyncChange {
 
 class FakeStorage implements SyncStorage {
   ready: SyncOperation[] = [];
+  private readonly operationsById = new Map<string, SyncOperation>();
+  private readonly terminalOperationIds = new Set<string>();
   watermark: Watermark = createWatermark("library:alpha", null);
   claimedBatches: string[][] = [];
   appliedOutcomes: OperationOutcome[][] = [];
@@ -84,8 +86,23 @@ class FakeStorage implements SyncStorage {
 
   async claimReady(_scope: string, limit: number): Promise<SyncOperation[]> {
     const claimed = this.ready.splice(0, limit);
+    for (const claimedOperation of claimed) {
+      this.operationsById.set(claimedOperation.operationId, {
+        ...claimedOperation,
+        status: "sending",
+      });
+    }
     this.claimedBatches.push(claimed.map(({ operationId }) => operationId));
     return claimed;
+  }
+
+  operation(operationId: string): SyncOperation | undefined {
+    const operation = this.operationsById.get(operationId);
+    return operation ? { ...operation } : undefined;
+  }
+
+  isTerminal(operationId: string): boolean {
+    return this.terminalOperationIds.has(operationId);
   }
 
   async applyOutcomesAndRecover(
@@ -101,6 +118,9 @@ class FakeStorage implements SyncStorage {
     reason: "partial-outcome" | "retry" | "cancelled" | "terminal",
   ): Promise<void> {
     this.recovered.push({ operationIds, reason });
+    if (reason === "terminal") {
+      for (const operationId of operationIds) this.terminalOperationIds.add(operationId);
+    }
   }
 
   async getWatermark(): Promise<Watermark> {
@@ -247,15 +267,19 @@ describe("sync coordinator", () => {
 
   it("recovers claimed operations when the push response scope mismatches", async () => {
     const { storage, transport, coordinator } = setup();
-    storage.ready = [operation("one")];
+    storage.ready = [operation("one"), operation("two")];
     transport.pushResponse = {
       protocolVersion: 1,
       scope: "library:beta",
-      outcomes: [outcome("one")],
+      outcomes: [outcome("one"), outcome("two")],
     };
 
     await expect(coordinator.run("library:alpha")).rejects.toThrow("does not match");
-    expect(storage.recovered).toEqual([{ operationIds: ["one"], reason: "terminal" }]);
+    expect(storage.recovered).toEqual([{ operationIds: ["one", "two"], reason: "terminal" }]);
+    expect(storage.operation("one")?.status).toBe("sending");
+    expect(storage.operation("two")?.status).toBe("sending");
+    expect(storage.isTerminal("one")).toBe(true);
+    expect(storage.isTerminal("two")).toBe(true);
   });
 
   it("recovers unreturned operations after a partial push response", async () => {
