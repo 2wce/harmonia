@@ -1,5 +1,5 @@
 import { readdirSync, readFileSync } from "node:fs";
-import { basename, extname, join } from "node:path";
+import { basename, dirname, extname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
@@ -72,13 +72,22 @@ describe("production package boundary", () => {
   });
 
   it("does not import the testing entry point from the production root", () => {
-    const testingImports = importedModuleSpecifiers(productionRootEntryPoint).filter(
-      (specifier) =>
-        specifier === "@2wce/harmonia/testing" ||
-        specifier === "./testing" ||
-        specifier.startsWith("./testing/"),
-    );
+    const testingImports =
+      importedModuleSpecifiers(productionRootEntryPoint).filter(isTestingImport);
 
     expect(testingImports).toEqual([]);
   });
 });
+
+function isTestingImport(specifier: string): boolean {
+  if (specifier === "@2wce/harmonia/testing") return true;
+  if (!specifier.startsWith(".")) return false;
+
+  const resolved = resolve(dirname(productionRootEntryPoint), specifier);
+  const relativePath = relative(sourceDirectory, resolved);
+  return (
+    relativePath === "testing" ||
+    relativePath.startsWith(`testing${sep}`) ||
+    relativePath.startsWith("testing.")
+  );
+}
