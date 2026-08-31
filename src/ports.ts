@@ -25,16 +25,20 @@ export interface SyncClock {
 }
 
 export interface SyncStorage {
-  listReady(scope: SyncScope, limit: number): Promise<SyncOperation[]>;
-  markSending(operationIds: string[]): Promise<void>;
-  applyOutcomes(outcomes: OperationOutcome[]): Promise<void>;
+  /** Claims ready operations atomically; concurrent callers receive disjoint sets. */
+  claimReady(scope: SyncScope, limit: number): Promise<SyncOperation[]>;
+  /** Applies returned outcomes and releases unreturned claimed IDs atomically. */
+  applyOutcomesAndRecover(
+    outcomes: OperationOutcome[],
+    unreturnedOperationIds: string[],
+  ): Promise<void>;
   recoverOperations(operationIds: string[], reason: SyncRecoveryReason): Promise<void>;
   getWatermark(scope: SyncScope): Promise<Watermark>;
   applyChangesAndAdvance(
     scope: SyncScope,
     changes: SyncChange[],
     nextCursor: string | null,
-    applyChange: (change: SyncChange) => Promise<void>,
+    applyChange: (change: SyncChange, transaction: SyncRemoteChangeTransaction) => Promise<void>,
     bootstrap: boolean,
   ): Promise<void>;
   recordBootstrapRequired(instruction: BootstrapRequired): Promise<void>;
@@ -47,7 +51,15 @@ export interface SyncTransport {
 }
 
 export interface SyncEntityApplier {
-  apply(change: SyncChange): Promise<void>;
+  apply(change: SyncChange, transaction: SyncRemoteChangeTransaction): Promise<void>;
+}
+
+/**
+ * The storage adapter owns this transaction and must commit staged remote
+ * mutations together with the cursor, or roll both back when application fails.
+ */
+export interface SyncRemoteChangeTransaction {
+  stage(change: SyncChange): void;
 }
 
 export interface SyncLifecycleSink {

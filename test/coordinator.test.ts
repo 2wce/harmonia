@@ -12,6 +12,7 @@ import type {
   SyncCancellation,
   SyncEntityApplier,
   SyncLifecycleSink,
+  SyncRemoteChangeTransaction,
   SyncStorage,
   SyncTransport,
 } from "../src/ports.js";
@@ -69,26 +70,30 @@ function change(changeId: string): SyncChange {
 class FakeStorage implements SyncStorage {
   ready: SyncOperation[] = [];
   watermark: Watermark = createWatermark("library:alpha", null);
-  markedSending: string[][] = [];
+  claimedBatches: string[][] = [];
   appliedOutcomes: OperationOutcome[][] = [];
+  outcomesAndRecovery: Array<{ outcomes: OperationOutcome[]; operationIds: string[] }> = [];
   recovered: Array<{
     operationIds: string[];
     reason: "partial-outcome" | "retry" | "cancelled" | "terminal";
   }> = [];
   appliedBatches: Array<{ changes: SyncChange[]; nextCursor: string | null; bootstrap: boolean }> =
     [];
+  committedChanges: SyncChange[] = [];
   applyError: Error | null = null;
 
-  async listReady(): Promise<SyncOperation[]> {
-    return this.ready;
+  async claimReady(_scope: string, limit: number): Promise<SyncOperation[]> {
+    const claimed = this.ready.splice(0, limit);
+    this.claimedBatches.push(claimed.map(({ operationId }) => operationId));
+    return claimed;
   }
 
-  async markSending(operationIds: string[]): Promise<void> {
-    this.markedSending.push(operationIds);
-  }
-
-  async applyOutcomes(outcomes: OperationOutcome[]): Promise<void> {
+  async applyOutcomesAndRecover(
+    outcomes: OperationOutcome[],
+    operationIds: string[],
+  ): Promise<void> {
     this.appliedOutcomes.push(outcomes);
+    this.outcomesAndRecovery.push({ outcomes, operationIds });
   }
 
   async recoverOperations(
@@ -106,11 +111,16 @@ class FakeStorage implements SyncStorage {
     _scope: string,
     changes: SyncChange[],
     nextCursor: string | null,
-    applyChange: (change: SyncChange) => Promise<void>,
+    applyChange: (change: SyncChange, transaction: SyncRemoteChangeTransaction) => Promise<void>,
     bootstrap: boolean,
   ): Promise<void> {
-    for (const remoteChange of changes) await applyChange(remoteChange);
+    const staged: SyncChange[] = [];
+    const transaction: SyncRemoteChangeTransaction = {
+      stage: (remoteChange) => staged.push(remoteChange),
+    };
+    for (const remoteChange of changes) await applyChange(remoteChange, transaction);
     if (this.applyError) throw this.applyError;
+    this.committedChanges.push(...staged);
     this.appliedBatches.push({ changes, nextCursor, bootstrap });
     this.watermark = { ...this.watermark, cursor: nextCursor, bootstrap: null };
   }
@@ -141,9 +151,13 @@ class FakeTransport implements SyncTransport {
     nextCursor: "bootstrapped",
   };
   pushError: unknown = null;
+  pushWait: Promise<void> | null = null;
+  pushStarted: (() => void) | null = null;
 
   async push(request: { operations: SyncOperation[] }): Promise<PushResponse> {
     this.pushRequests.push(request.operations);
+    this.pushStarted?.();
+    if (this.pushWait) await this.pushWait;
     if (this.pushError) throw this.pushError;
     return this.pushResponse;
   }
@@ -160,10 +174,8 @@ class FakeTransport implements SyncTransport {
 }
 
 class FakeEntities implements SyncEntityApplier {
-  applied: SyncChange[] = [];
-
-  async apply(changeToApply: SyncChange): Promise<void> {
-    this.applied.push(changeToApply);
+  async apply(changeToApply: SyncChange, transaction: SyncRemoteChangeTransaction): Promise<void> {
+    transaction.stage(changeToApply);
   }
 }
 
@@ -216,7 +228,7 @@ describe("sync coordinator", () => {
 
     await coordinator.run("library:alpha");
 
-    expect(transport.pushRequests).toEqual([[storage.ready[0]]]);
+    expect(transport.pushRequests).toEqual([[operation("ready")]]);
   });
 
   it("applies push outcomes by operation identity", async () => {
@@ -244,7 +256,9 @@ describe("sync coordinator", () => {
 
     await coordinator.run("library:alpha");
 
-    expect(storage.recovered).toEqual([{ operationIds: ["two"], reason: "partial-outcome" }]);
+    expect(storage.outcomesAndRecovery).toEqual([
+      { outcomes: [outcome("one")], operationIds: ["two"] },
+    ]);
   });
 
   it("schedules a retry and leaves operations recoverable after a retryable push failure", async () => {
@@ -271,7 +285,7 @@ describe("sync coordinator", () => {
   });
 
   it("applies pulled changes and advances the cursor in one storage call", async () => {
-    const { storage, transport, entities, coordinator } = setup();
+    const { storage, transport, coordinator } = setup();
     transport.pullResponse = {
       protocolVersion: 1,
       scope: "library:alpha",
@@ -284,7 +298,7 @@ describe("sync coordinator", () => {
     expect(storage.appliedBatches).toEqual([
       { changes: [change("change-1")], nextCursor: "cursor-1", bootstrap: false },
     ]);
-    expect(entities.applied).toEqual([change("change-1")]);
+    expect(storage.committedChanges).toEqual([change("change-1")]);
   });
 
   it("does not advance the cursor when applying a pulled change fails", async () => {
@@ -323,13 +337,27 @@ describe("sync coordinator", () => {
     expect(storage.appliedBatches[0]?.bootstrap).toBe(true);
   });
 
+  it("does not persist a bootstrap instruction for another scope", async () => {
+    const { storage, transport, coordinator } = setup();
+    transport.pullResponse = {
+      kind: "bootstrap-required",
+      scope: "library:beta",
+      reason: "invalid-watermark",
+      snapshotToken: "snapshot-other-scope",
+    };
+
+    await expect(coordinator.run("library:alpha")).rejects.toThrow("does not match");
+    expect(storage.watermark.bootstrap).toBeNull();
+  });
+
   it("recovers claimed operations and emits cancellation without acknowledging them", async () => {
     const { storage, transport, lifecycle, cancellation, coordinator } = setup();
     storage.ready = [operation("one")];
-    const originalMarkSending = storage.markSending.bind(storage);
-    storage.markSending = async (operationIds) => {
-      await originalMarkSending(operationIds);
+    const originalClaimReady = storage.claimReady.bind(storage);
+    storage.claimReady = async (scope, limit) => {
+      const claimed = await originalClaimReady(scope, limit);
       cancellation.aborted = true;
+      return claimed;
     };
 
     const result = await coordinator.run("library:alpha");
@@ -338,5 +366,44 @@ describe("sync coordinator", () => {
     expect(transport.pushRequests).toEqual([]);
     expect(storage.recovered).toEqual([{ operationIds: ["one"], reason: "cancelled" }]);
     expect(lifecycle.events).toContainEqual({ kind: "connection-state-changed", state: "stopped" });
+  });
+
+  it("does not acknowledge a push that is cancelled while in flight", async () => {
+    const { storage, transport, cancellation, coordinator } = setup();
+    storage.ready = [operation("one")];
+    let release!: () => void;
+    let markStarted!: () => void;
+    const started = new Promise<void>((resolve) => {
+      markStarted = resolve;
+    });
+    transport.pushStarted = markStarted;
+    transport.pushWait = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+
+    const run = coordinator.run("library:alpha");
+    await started;
+    cancellation.aborted = true;
+    release();
+    const result = await run;
+
+    expect(result.status).toBe("cancelled");
+    expect(storage.appliedOutcomes).toEqual([]);
+    expect(storage.recovered).toEqual([{ operationIds: ["one"], reason: "cancelled" }]);
+  });
+
+  it("claims an operation only once across overlapping runs", async () => {
+    const { storage, transport, coordinator } = setup();
+    storage.ready = [operation("one")];
+    transport.pushResponse = {
+      protocolVersion: 1,
+      scope: "library:alpha",
+      outcomes: [outcome("one")],
+    };
+
+    await Promise.all([coordinator.run("library:alpha"), coordinator.run("library:alpha")]);
+
+    expect(storage.claimedBatches).toEqual([["one"], []]);
+    expect(transport.pushRequests).toHaveLength(1);
   });
 });

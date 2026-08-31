@@ -47,11 +47,10 @@ export class SyncCoordinator {
     this.emit({ kind: "connection-state-changed", state: "syncing" });
     if (this.options.cancellation.aborted) return this.cancelled([], scope);
 
-    const operations = await this.options.storage.listReady(scope, this.options.batchSize);
+    const operations = await this.options.storage.claimReady(scope, this.options.batchSize);
     let pushed = 0;
     if (operations.length > 0) {
       const operationIds = operations.map(({ operationId }) => operationId);
-      await this.options.storage.markSending(operationIds);
       this.emit({ kind: "operations-claimed", scope, operationIds });
       if (this.options.cancellation.aborted) return this.cancelled(operationIds, scope);
 
@@ -71,75 +70,94 @@ export class SyncCoordinator {
   }
 
   private async push(scope: SyncScope, operations: SyncOperation[]): Promise<SyncRunResult> {
+    let response;
     try {
-      const response = await this.options.transport.push({
+      response = await this.options.transport.push({
         protocolVersion: PROTOCOL_VERSION,
         scope,
         operations,
       });
-      assertScope(response.scope, scope);
-
-      const returnedIds = new Set(response.outcomes.map(({ operationId }) => operationId));
-      const operationIds = new Set(operations.map(({ operationId }) => operationId));
-      if (
-        returnedIds.size !== response.outcomes.length ||
-        [...returnedIds].some((operationId) => !operationIds.has(operationId))
-      ) {
-        throw new Error("Sync response contains an outcome for an unknown operation.");
-      }
-      const unreturnedIds = operations
-        .map(({ operationId }) => operationId)
-        .filter((operationId) => !returnedIds.has(operationId));
-
-      await this.options.storage.applyOutcomes(response.outcomes);
-      if (unreturnedIds.length > 0) {
-        await this.options.storage.recoverOperations(unreturnedIds, "partial-outcome");
-      }
-      for (const outcome of response.outcomes) {
-        if (outcome.status === "rejected") {
-          this.emit({
-            kind: "operation-rejected",
-            scope,
-            operationId: outcome.operationId,
-            code: outcome.code,
-          });
-        }
-        if (outcome.status === "conflicted") {
-          this.emit({
-            kind: "operation-conflicted",
-            scope,
-            operationId: outcome.operationId,
-            code: outcome.code,
-          });
-        }
-      }
-      return { status: "completed", pushed: response.outcomes.length, pulled: 0 };
     } catch (error) {
-      const transportError = asTransportError(error);
-      const decision = classifyTransportError(transportError);
-      const operationIds = operations.map(({ operationId }) => operationId);
-      if (decision.kind === "retry" && transportError.kind === "retryable-transport-error") {
-        const schedule = scheduleRetry(transportError, 1, {
-          ...this.options.retry,
-          now: () => this.options.clock.now(),
-          random: () => this.options.clock.random(),
-        });
-        await this.options.storage.recoverOperations(operationIds, "retry");
-        for (const operation of operations) {
-          this.emit({
-            kind: "operation-retry-scheduled",
-            scope,
-            operationId: operation.operationId,
-            retryAfterMs: schedule.delayMs,
-            code: transportError.code,
-          });
-        }
-        return { status: "retry-scheduled", pushed: 0, pulled: 0 };
-      }
-
-      await this.options.storage.recoverOperations(operationIds, "terminal");
-      throw error;
+      return this.handlePushError(scope, operations, error);
     }
+
+    assertScope(response.scope, scope);
+    if (this.options.cancellation.aborted) {
+      await this.options.storage.recoverOperations(
+        operations.map(({ operationId }) => operationId),
+        "cancelled",
+      );
+      this.emit({ kind: "connection-state-changed", state: "stopped" });
+      return { status: "cancelled", pushed: 0, pulled: 0 };
+    }
+
+    const returnedIds = new Set(response.outcomes.map(({ operationId }) => operationId));
+    const operationIds = new Set(operations.map(({ operationId }) => operationId));
+    if (
+      returnedIds.size !== response.outcomes.length ||
+      [...returnedIds].some((operationId) => !operationIds.has(operationId))
+    ) {
+      await this.options.storage.recoverOperations(
+        operations.map(({ operationId }) => operationId),
+        "terminal",
+      );
+      throw new Error("Sync response contains an outcome for an unknown operation.");
+    }
+    const unreturnedIds = operations
+      .map(({ operationId }) => operationId)
+      .filter((operationId) => !returnedIds.has(operationId));
+
+    await this.options.storage.applyOutcomesAndRecover(response.outcomes, unreturnedIds);
+    for (const outcome of response.outcomes) {
+      if (outcome.status === "rejected") {
+        this.emit({
+          kind: "operation-rejected",
+          scope,
+          operationId: outcome.operationId,
+          code: outcome.code,
+        });
+      }
+      if (outcome.status === "conflicted") {
+        this.emit({
+          kind: "operation-conflicted",
+          scope,
+          operationId: outcome.operationId,
+          code: outcome.code,
+        });
+      }
+    }
+    return { status: "completed", pushed: response.outcomes.length, pulled: 0 };
+  }
+
+  private async handlePushError(
+    scope: SyncScope,
+    operations: SyncOperation[],
+    error: unknown,
+  ): Promise<SyncRunResult> {
+    const transportError = asTransportError(error);
+    const decision = classifyTransportError(transportError);
+    const operationIds = operations.map(({ operationId }) => operationId);
+    if (decision.kind === "retry" && transportError.kind === "retryable-transport-error") {
+      const schedule = scheduleRetry(transportError, 1, {
+        ...this.options.retry,
+        now: () => this.options.clock.now(),
+        random: () => this.options.clock.random(),
+      });
+      await this.options.storage.recoverOperations(operationIds, "retry");
+      for (const operation of operations) {
+        this.emit({
+          kind: "operation-retry-scheduled",
+          scope,
+          operationId: operation.operationId,
+          retryAfterMs: schedule.delayMs,
+          code: transportError.code,
+        });
+      }
+      return { status: "retry-scheduled", pushed: 0, pulled: 0 };
+    }
+
+    await this.options.storage.recoverOperations(operationIds, "terminal");
+    throw error;
   }
 
   private async pull(scope: SyncScope): Promise<Pick<SyncRunResult, "status" | "pulled">> {
@@ -163,6 +181,7 @@ export class SyncCoordinator {
     }
 
     if (isBootstrapRequired(response)) {
+      assertScope(response.scope, scope);
       await this.options.storage.recordBootstrapRequired(response);
       this.emit({ kind: "bootstrap-required", scope, reason: response.reason });
       return { status: "bootstrap-required", pulled: 0 };
@@ -173,14 +192,17 @@ export class SyncCoordinator {
       scope,
       response.changes,
       response.nextCursor,
-      (change) => this.applyChange(change),
+      (change, transaction) => this.applyChange(change, transaction),
       bootstrap,
     );
     return { status: "completed", pulled: response.changes.length };
   }
 
-  private applyChange(change: SyncChange): Promise<void> {
-    return this.options.entities.apply(change);
+  private applyChange(
+    change: SyncChange,
+    transaction: import("./ports.js").SyncRemoteChangeTransaction,
+  ): Promise<void> {
+    return this.options.entities.apply(change, transaction);
   }
 
   private async cancelled(
