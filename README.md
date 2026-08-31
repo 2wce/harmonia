@@ -49,3 +49,15 @@ database, rebuild search indexes, or resolve domain conflicts. It reports
 rejections and conflicts so the product can apply its own policy. Product
 adapters remain responsible for domain rules, rich conflict merging, and
 separate binary content flows.
+
+## Version compatibility
+
+Harmonia follows semantic versioning. A major version is required when a
+release changes operation identity, outcome meaning, watermark behavior, or
+operation state transitions. New optional wire fields may be added in a
+backward-compatible minor release; consumers must ignore fields they do not
+understand. Protocol versions remain explicit at the wire boundary.
+
+The package is initially published as a restricted scoped package. Releases
+are published by CI only from an explicitly created `v*` tag with the npm token
+provided by the release environment.
