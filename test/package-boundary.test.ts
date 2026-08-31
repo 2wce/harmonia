@@ -42,7 +42,7 @@ function productionSourceFiles(directory = sourceDirectory): string[] {
       return entry.name === "testing" ? [] : productionSourceFiles(path);
     }
 
-    return [".ts", ".tsx", ".mts", ".cts"].includes(extname(entry.name)) ? [path] : [];
+    return isProductionSourceFile(entry.name) ? [path] : [];
   });
 }
 
@@ -65,9 +65,22 @@ describe("production package boundary", () => {
   it("recognizes ESM and CommonJS dependency declarations", () => {
     expect(
       sourceModuleSpecifiers(
-        'import "hono"; export { value } from "drizzle-orm"; const db = require("better-sqlite3"); import sqlite = require("@libsql/client");',
+        'import "hono"; export { value } from "drizzle-orm"; const db = require("better-sqlite3"); import sqlite = require("@libsql/client"); import("electron");',
       ),
-    ).toEqual(["hono", "drizzle-orm", "better-sqlite3", "@libsql/client"]);
+    ).toEqual(["hono", "drizzle-orm", "electron", "better-sqlite3", "@libsql/client"]);
+  });
+
+  it("recognizes all compilable production source extensions", () => {
+    expect(
+      ["module.ts", "module.tsx", "module.mts", "module.cts"].every(isProductionSourceFile),
+    ).toBe(true);
+    expect(isProductionSourceFile("README.md")).toBe(false);
+  });
+
+  it("normalizes relative paths before checking the testing boundary", () => {
+    expect(
+      ["./testing.js", "./foo/../testing/index.js", "../src/testing/index.js"].map(isTestingImport),
+    ).toEqual([true, true, true]);
   });
 
   it("keeps production sources independent of product frameworks and infrastructure", () => {
@@ -104,4 +117,8 @@ function isTestingImport(specifier: string): boolean {
     relativePath.startsWith(`testing${sep}`) ||
     relativePath.startsWith("testing.")
   );
+}
+
+function isProductionSourceFile(fileName: string): boolean {
+  return [".ts", ".tsx", ".mts", ".cts"].includes(extname(fileName));
 }
