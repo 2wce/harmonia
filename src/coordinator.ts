@@ -81,7 +81,15 @@ export class SyncCoordinator {
       return this.handlePushError(scope, operations, error);
     }
 
-    assertScope(response.scope, scope);
+    try {
+      assertScope(response.scope, scope);
+    } catch (error) {
+      await this.options.storage.recoverOperations(
+        operations.map(({ operationId }) => operationId),
+        "terminal",
+      );
+      throw error;
+    }
     if (this.options.cancellation.aborted) {
       await this.options.storage.recoverOperations(
         operations.map(({ operationId }) => operationId),

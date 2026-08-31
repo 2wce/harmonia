@@ -245,6 +245,19 @@ describe("sync coordinator", () => {
     expect(storage.appliedOutcomes).toEqual([[outcome("two", "rejected"), outcome("one")]]);
   });
 
+  it("recovers claimed operations when the push response scope mismatches", async () => {
+    const { storage, transport, coordinator } = setup();
+    storage.ready = [operation("one")];
+    transport.pushResponse = {
+      protocolVersion: 1,
+      scope: "library:beta",
+      outcomes: [outcome("one")],
+    };
+
+    await expect(coordinator.run("library:alpha")).rejects.toThrow("does not match");
+    expect(storage.recovered).toEqual([{ operationIds: ["one"], reason: "terminal" }]);
+  });
+
   it("recovers unreturned operations after a partial push response", async () => {
     const { storage, transport, coordinator } = setup();
     storage.ready = [operation("one"), operation("two")];
