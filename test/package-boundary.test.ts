@@ -47,15 +47,29 @@ function productionSourceFiles(directory = sourceDirectory): string[] {
 }
 
 function importedModuleSpecifiers(filePath: string): string[] {
-  const source = readFileSync(filePath, "utf8");
+  return sourceModuleSpecifiers(readFileSync(filePath, "utf8"));
+}
+
+function sourceModuleSpecifiers(source: string): string[] {
   const staticImports = /\b(?:import|export)\s+(?:[^"']*?\sfrom\s+)?["']([^"']+)["']/g;
   const dynamicImports = /\bimport\s*\(\s*["']([^"']+)["']\s*\)/g;
-  return [...source.matchAll(staticImports), ...source.matchAll(dynamicImports)].map(
-    ([, specifier]) => specifier,
-  );
+  const commonJsImports = /\b(?:require|module\.require)\s*\(\s*["']([^"']+)["']\s*\)/g;
+  return [
+    ...source.matchAll(staticImports),
+    ...source.matchAll(dynamicImports),
+    ...source.matchAll(commonJsImports),
+  ].map(([, specifier]) => specifier);
 }
 
 describe("production package boundary", () => {
+  it("recognizes ESM and CommonJS dependency declarations", () => {
+    expect(
+      sourceModuleSpecifiers(
+        'import "hono"; export { value } from "drizzle-orm"; const db = require("better-sqlite3"); import sqlite = require("@libsql/client");',
+      ),
+    ).toEqual(["hono", "drizzle-orm", "better-sqlite3", "@libsql/client"]);
+  });
+
   it("keeps production sources independent of product frameworks and infrastructure", () => {
     const prohibitedImports = productionSourceFiles().flatMap((filePath) =>
       importedModuleSpecifiers(filePath).flatMap((specifier) => {
