@@ -89,7 +89,7 @@ describe("wire validation", () => {
           entity: "highlight",
           recordId: "highlight-1",
           kind: "replace",
-          payload: null,
+          payload: null as unknown,
           logicalTime: null,
           version: null,
         },
