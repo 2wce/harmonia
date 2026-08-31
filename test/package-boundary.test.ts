@@ -15,7 +15,7 @@ const prohibitedPackagePatterns: ReadonlyArray<{
   {
     name: "SQLite",
     matches: (specifier) =>
-      /^(?:sqlite|sqlite3|better-sqlite3|@libsql\/|@sqlite\.org\/sqlite-wasm)(?:\/|$)/.test(
+      /^(?:sqlite|sqlite3|better-sqlite3|@libsql|@sqlite\.org\/sqlite-wasm)(?:\/|$)/.test(
         specifier,
       ),
   },
@@ -42,7 +42,7 @@ function productionSourceFiles(directory = sourceDirectory): string[] {
       return entry.name === "testing" ? [] : productionSourceFiles(path);
     }
 
-    return extname(entry.name) === ".ts" ? [path] : [];
+    return [".ts", ".tsx", ".mts", ".cts"].includes(extname(entry.name)) ? [path] : [];
   });
 }
 
@@ -72,8 +72,13 @@ describe("production package boundary", () => {
   });
 
   it("does not import the testing entry point from the production root", () => {
-    expect(importedModuleSpecifiers(productionRootEntryPoint)).not.toContain(
-      "@2wce/harmonia/testing",
+    const testingImports = importedModuleSpecifiers(productionRootEntryPoint).filter(
+      (specifier) =>
+        specifier === "@2wce/harmonia/testing" ||
+        specifier === "./testing" ||
+        specifier.startsWith("./testing/"),
     );
+
+    expect(testingImports).toEqual([]);
   });
 });
