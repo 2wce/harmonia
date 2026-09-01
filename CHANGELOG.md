@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.1
+
+### Patch Changes
+
+- d8760bb: Require Changesets on user pull requests and publish releases when the generated release pull request is merged to main.
+- b28072f: Build the package before packing or publishing so its declared `dist/` exports are included in the tarball.
+
 All notable changes to Harmonia will be documented in this file.
 
 ## 0.1.0
