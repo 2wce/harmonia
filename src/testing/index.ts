@@ -1,4 +1,2 @@
-/**
- * Public testing helpers will be added in later tasks.
- */
-export {};
+export * from "./contract-suite.js";
+export * from "./fakes.js";
