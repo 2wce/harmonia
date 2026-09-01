@@ -1,9 +1,9 @@
 name: Release
 
 on:
-  push:
-    tags:
-      - "v*"
+  pull_request:
+    types:
+      - closed
 
 permissions:
   contents: read
@@ -11,10 +11,17 @@ permissions:
 
 jobs:
   publish:
+    if: >-
+      github.event.pull_request.merged == true &&
+      github.event.pull_request.base.ref == 'main' &&
+      github.event.pull_request.head.ref == 'changeset-release/main' &&
+      github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     environment: npm-release
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.merge_commit_sha }}
       - uses: pnpm/action-setup@v4
         with:
           version: 10.33.1
@@ -24,15 +31,22 @@ jobs:
           cache: pnpm
           registry-url: https://registry.npmjs.org
       - run: pnpm install --frozen-lockfile
-      - name: Verify tag matches package version
-        run: >-
-          node --input-type=module -e 'import fs from "node:fs"; const version =
-          JSON.parse(fs.readFileSync("package.json", "utf8")).version; if
-          (process.env.GITHUB_REF_NAME.slice(1) !== version) process.exit(1)'
       - run: pnpm typecheck
       - run: pnpm test
       - run: pnpm lint
       - run: pnpm format:check
       - run: pnpm pack:check
+      - name: Check whether this version is already published
+        id: publication
+        run: |
+          version="$(node -p "require('./package.json').version")"
+          if npm view "@2wce/harmonia@${version}" version --silent >/dev/null 2>&1; then
+            echo "@2wce/harmonia@${version} is already published; nothing to do."
+            echo "should_publish=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "@2wce/harmonia@${version} is not published; publishing it now."
+            echo "should_publish=true" >> "$GITHUB_OUTPUT"
+          fi
       - name: Publish to npm with provenance
+        if: steps.publication.outputs.should_publish == 'true'
         run: npm publish --access public --provenance

@@ -1,0 +1,45 @@
+name: Changeset Check
+
+on:
+  pull_request:
+    types:
+      - opened
+      - reopened
+      - synchronize
+
+permissions:
+  contents: read
+
+jobs:
+  changeset:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+      - name: Require a Changeset
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          HEAD_REF: ${{ github.event.pull_request.head.ref }}
+          HEAD_REPOSITORY: ${{ github.event.pull_request.head.repo.full_name }}
+          BASE_REPOSITORY: ${{ github.repository }}
+        run: |
+          if [[ "$HEAD_REF" == "changeset-release/main" && "$HEAD_REPOSITORY" == "$BASE_REPOSITORY" ]]; then
+            echo "Generated Changesets release pull request; Changeset check is not required."
+            exit 0
+          fi
+
+          changeset_file="$(git diff --name-only "$BASE_SHA...$HEAD_SHA" \
+            | grep -E '^\.changeset/[^/]+\.md$' \
+            | grep -v '^\.changeset/README\.md$' \
+            | head -n 1 || true)"
+
+          if [[ -z "$changeset_file" ]]; then
+            echo "This pull request must include a Changeset."
+            echo "Run 'pnpm changeset', select @2wce/harmonia, and commit the generated .changeset/*.md file."
+            exit 1
+          fi
+
+          echo "Changeset found: $changeset_file"
