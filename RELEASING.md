@@ -46,15 +46,15 @@ Before the first release only:
 2. Create a protected GitHub `npm-bootstrap` environment, require an approval,
    and add the token as the `NPM_BOOTSTRAP_TOKEN` environment secret.
 3. Run the `Bootstrap npm Package` workflow while `main` still contains the
-   intended initial version (`0.1.0`). It runs the full package checks and
-   publishes without provenance using the temporary token.
+   intended initial version (`0.1.0`). It publishes directly without
+   provenance using the temporary token.
 4. Revoke the npm token, delete the `NPM_BOOTSTRAP_TOKEN` secret, and remove
    the `npm-bootstrap` environment and `bootstrap.yml` workflow.
 5. Make the source repository public, then configure the npm Trusted Publisher
    described above. Future releases use OIDC and provenance through
    `release.yml` only.
 
-The bootstrap workflow is safe to retry: it checks whether the exact package
-version already exists before publishing.
+Do not rerun the bootstrap workflow after a successful publication; the same
+package version cannot be published twice.
 
 The package is public, and the release workflow has no long-lived npm credential.

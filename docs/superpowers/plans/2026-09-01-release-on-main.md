@@ -59,7 +59,7 @@ Check out the merge commit, verify typechecking, tests, lint, formatting, and pa
 
 - [ ] **Step 3: Add the one-time bootstrap path**
 
-Create `.github/workflows/bootstrap.yml` with a manual dispatch, protected `npm-bootstrap` environment, and `NPM_BOOTSTRAP_TOKEN` secret. Run the same checks as the normal release, query npm for the exact package version, and publish with `--provenance=false` only when the version is not already present. Remove the workflow, environment, and token after publishing `0.1.0`.
+Create `.github/workflows/bootstrap.yml` with a manual dispatch, protected `npm-bootstrap` environment, and `NPM_BOOTSTRAP_TOKEN` secret. Check out `main` and publish directly with `--provenance=false`; do not add package assertions, registry preflights, or verification steps to this one-time bootstrap. Remove the workflow, environment, and token after publishing `0.1.0`.
 
 ### Task 3: Document the new release contract and add a workflow changeset
 
