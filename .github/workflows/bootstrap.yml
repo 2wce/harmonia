@@ -1,0 +1,61 @@
+name: Bootstrap npm Package
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: npm-bootstrap
+  cancel-in-progress: false
+
+jobs:
+  bootstrap:
+    runs-on: ubuntu-latest
+    environment: npm-bootstrap
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.33.1
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+          registry-url: https://registry.npmjs.org
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm typecheck
+      - run: pnpm test
+      - run: pnpm lint
+      - run: pnpm format:check
+      - run: pnpm pack:check
+      - name: Verify initial package version
+        run: >-
+          node --input-type=module -e 'import fs from "node:fs"; const packageJson =
+          JSON.parse(fs.readFileSync("package.json", "utf8")); if
+          (packageJson.name !== "@2wce/harmonia" || packageJson.version !== "0.1.0")
+          { console.error(`Bootstrap requires @2wce/harmonia@0.1.0, found
+          ${packageJson.name}@${packageJson.version}`); process.exit(1) }'
+      - name: Check whether this version is already published
+        id: publication
+        run: |
+          version="$(node -p "require('./package.json').version")"
+          if npm_view_output="$(npm view "@2wce/harmonia@${version}" version --silent 2>&1)"; then
+            echo "@2wce/harmonia@${version} is already published; nothing to do."
+            echo "should_publish=false" >> "$GITHUB_OUTPUT"
+          elif grep -q 'E404\|404 Not Found' <<< "$npm_view_output"; then
+            echo "@2wce/harmonia@${version} is not published; bootstrapping it now."
+            echo "should_publish=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "$npm_view_output"
+            echo "Unable to determine whether @2wce/harmonia@${version} is published."
+            exit 1
+          fi
+      - name: Publish initial package with bootstrap token
+        if: steps.publication.outputs.should_publish == 'true'
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_BOOTSTRAP_TOKEN }}
+        run: npm publish --access public --provenance=false
