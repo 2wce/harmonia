@@ -58,8 +58,6 @@ operation state transitions. New optional wire fields may be added in a
 backward-compatible minor release; consumers must ignore fields they do not
 understand. Protocol versions remain explicit at the wire boundary.
 
-The initial package version is bootstrapped once by an approval-gated CI
-workflow using a short-lived npm token. That token is revoked after the first
-publication. Subsequent releases are versioned with Changesets and published
-by CI when the generated release pull request is merged to `main`, using npm
-Trusted Publishing, OIDC, and provenance.
+Releases are versioned with Changesets and published by CI when the generated
+release pull request is merged to `main`, using npm Trusted Publishing, OIDC,
+and provenance.

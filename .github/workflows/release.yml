@@ -36,17 +36,5 @@ jobs:
       - run: pnpm lint
       - run: pnpm format:check
       - run: pnpm pack:check
-      - name: Check whether this version is already published
-        id: publication
-        run: |
-          version="$(node -p "require('./package.json').version")"
-          if npm view "@2wce/harmonia@${version}" version --silent >/dev/null 2>&1; then
-            echo "@2wce/harmonia@${version} is already published; nothing to do."
-            echo "should_publish=false" >> "$GITHUB_OUTPUT"
-          else
-            echo "@2wce/harmonia@${version} is not published; publishing it now."
-            echo "should_publish=true" >> "$GITHUB_OUTPUT"
-          fi
       - name: Publish to npm with provenance
-        if: steps.publication.outputs.should_publish == 'true'
         run: npm publish --access public --provenance
